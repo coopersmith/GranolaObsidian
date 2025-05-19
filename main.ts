@@ -3,11 +3,13 @@ import { App, Editor, MarkdownView, Modal, Notice, Plugin, PluginSettingTab, Set
 interface GranolaPluginSettings {
 	outputFolder: string;
 	apiToken: string;
+	companyName: string;
 }
 
 const DEFAULT_SETTINGS: GranolaPluginSettings = {
 	outputFolder: 'Granola',
-	apiToken: ''
+	apiToken: '',
+	companyName: ''
 }
 
 export default class GranolaPlugin extends Plugin {
@@ -130,11 +132,86 @@ export default class GranolaPlugin extends Plugin {
 		}
 	}
 	
+	// Helper function to extract attendees from an array
+	extractAttendeesFromArray(attendeesArray: any[]): {email: string, role?: string}[] {
+		if (!Array.isArray(attendeesArray)) {
+			console.log("DEBUG - Expected array but got:", attendeesArray);
+			return [];
+		}
+		
+		return attendeesArray
+			.filter((attendee: any) => {
+				const isValid = attendee && 
+					attendee.email && 
+					typeof attendee.email === 'string' &&
+					(!attendee.resource || attendee.resource === false);
+				
+				if (!isValid && attendee) {
+					console.log("DEBUG - Filtering out attendee:", attendee);
+				}
+				return isValid;
+			})
+			.map((attendee: any) => {
+				let role = '';
+				if (attendee.organizer) role = 'organizer';
+				else if (attendee.self) role = 'self';
+				
+				return {
+					email: attendee.email,
+					...(role ? { role } : {})
+				};
+			});
+	}
+	
+	// Recursive function to find attendees property
+	findAttendeesRecursive(obj: any, path: string = ''): {attendees: any[], path: string} | null {
+		if (!obj || typeof obj !== 'object') return null;
+		
+		// Check if this object has an attendees property that's an array
+		if (obj.attendees && Array.isArray(obj.attendees) && obj.attendees.length > 0) {
+			return { attendees: obj.attendees, path: path ? `${path}.attendees` : 'attendees' };
+		}
+		
+		// Don't search in known non-attendee properties to avoid excessive logging
+		const skipProps = ['content', 'text', 'type', 'attrs'];
+		
+		// Recursively search in object properties
+		for (const key of Object.keys(obj)) {
+			if (skipProps.includes(key)) continue;
+			
+			const newPath = path ? `${path}.${key}` : key;
+			const result = this.findAttendeesRecursive(obj[key], newPath);
+			if (result) return result;
+		}
+		
+		return null;
+	}
+	
 	async processDocument(doc: any): Promise<boolean> {
 		try {
-			const title = doc.title || "Untitled Granola Note";
+			// Extract and format the creation date for title prefixing
+			const createdAtDate = doc.created_at ? new Date(doc.created_at) : new Date();
+			
+			// Apply timezone offset to display local time
+			const offsetHours = createdAtDate.getTimezoneOffset() / -60;
+			
+			// Format date components for prefixing the title
+			const year = createdAtDate.getFullYear();
+			const month = String(createdAtDate.getMonth() + 1).padStart(2, '0');
+			const day = String(createdAtDate.getDate()).padStart(2, '0');
+			const datePrefix = `${year}-${month}-${day}`;
+			
+			// Update title to include date for uniqueness
+			const originalTitle = doc.title || "Untitled Granola Note";
+			const title = `${datePrefix} ${originalTitle}`;
+			
 			const docId = doc.id || "unknown_id";
 			console.log(`Processing document: ${title} (ID: ${docId})`);
+			
+			// Log the full document structure to find attendees
+			console.log("DEBUG - Document keys:", Object.keys(doc));
+			if (doc.notes) console.log("DEBUG - doc.notes keys:", Object.keys(doc.notes));
+			if (doc.meeting_metadata) console.log("DEBUG - doc.meeting_metadata keys:", Object.keys(doc.meeting_metadata));
 			
 			// Find content to parse
 			let contentToParse = null;
@@ -152,33 +229,92 @@ export default class GranolaPlugin extends Plugin {
 			// Convert to markdown
 			const markdownContent = this.convertProseMirrorToMarkdown(contentToParse);
 			
-			// Format dates for Obsidian linking
-			const createdAtDate = doc.created_at ? new Date(doc.created_at) : new Date();
-			const updatedAtDate = doc.updated_at ? new Date(doc.updated_at) : new Date();
-			
-			// Format as [[yyyy-mm-dd]] followed by timestamp
-			const formatDateForObsidian = (date: Date) => {
-				const year = date.getFullYear();
-				const month = String(date.getMonth() + 1).padStart(2, '0');
-				const day = String(date.getDate()).padStart(2, '0');
-				return `[[${year}-${month}-${day}]] ${date.toISOString()}`;
+			// Format dates with timezone offset display
+			const formatDateWithOffset = (dateString: string | null) => {
+				if (!dateString) return new Date().toISOString();
+				
+				const date = new Date(dateString);
+				return date.toISOString();
 			};
 			
-			// Add frontmatter
-			const frontmatter = 
+			// Extract attendees with deep inspection
+			let attendees: {email: string, role?: string}[] = [];
+			
+			// Look in various possible locations for attendees
+			if (doc.attendees && Array.isArray(doc.attendees)) {
+				console.log("DEBUG - Found attendees in doc.attendees");
+				attendees = this.extractAttendeesFromArray(doc.attendees);
+			} else if (doc.meeting_metadata && doc.meeting_metadata.attendees) {
+				console.log("DEBUG - Found attendees in doc.meeting_metadata.attendees");
+				attendees = this.extractAttendeesFromArray(doc.meeting_metadata.attendees);
+			} else if (doc.notes && doc.notes.meeting_metadata && doc.notes.meeting_metadata.attendees) {
+				console.log("DEBUG - Found attendees in doc.notes.meeting_metadata.attendees");
+				attendees = this.extractAttendeesFromArray(doc.notes.meeting_metadata.attendees);
+			} else if (doc.metadata && doc.metadata.attendees) {
+				console.log("DEBUG - Found attendees in doc.metadata.attendees");
+				attendees = this.extractAttendeesFromArray(doc.metadata.attendees);
+			} else {
+				// Try to find attendees in any object property
+				console.log("DEBUG - Searching document for attendees property");
+				const foundAttendees = this.findAttendeesRecursive(doc);
+				if (foundAttendees) {
+					console.log("DEBUG - Found attendees in nested property:", foundAttendees.path);
+					attendees = this.extractAttendeesFromArray(foundAttendees.attendees);
+				}
+			}
+			
+			console.log("DEBUG - Final attendees array:", attendees);
+			
+			// Build frontmatter in the requested order with new properties
+			let frontmatter = 
 `---
-granola_id: ${docId}
 title: "${title.replace(/"/g, '\\"')}"
-created_at: ${formatDateForObsidian(createdAtDate)}
-updated_at: ${formatDateForObsidian(updatedAtDate)}
----
-
+category: "[[Meetings]]"
+type: 
+created_at: ${formatDateWithOffset(doc.created_at)}
 `;
+
+			// Add organization if set
+			if (this.settings.companyName) {
+				frontmatter += `org: "[[${this.settings.companyName}]]"\n`;
+			} else {
+				frontmatter += `org: \n`;
+			}
+
+			// Add people (renamed from attendees)
+			if (attendees.length > 0) {
+				// Format as a simple YAML string array
+				frontmatter += `people: [`;
+				
+				// Join emails with commas, use extracted names for links
+				const emailList = attendees.map(attendee => {
+					const email = attendee.email;
+					const name = this.extractNameFromEmail(email);
+					// Just link to the name directly, not the email
+					return `"[[${name}]]"`;
+				}).join(", ");
+				
+				frontmatter += `${emailList}]\n`;
+			} else {
+				frontmatter += `people: \n`;
+			}
+
+			// Add empty topics field
+			frontmatter += `topics: \n`;
+
+			// Add tags field
+			frontmatter += `tags: meetings\n`;
+
+			// Add granola_id at the end (moved from beginning)
+			frontmatter += `granola_id: ${docId}\n`;
+
+			// Close frontmatter
+			frontmatter += `---\n\n`;
 			
 			const finalMarkdown = frontmatter + markdownContent;
 			
-			// Create filename
-			const filename = this.sanitizeFilename(title) + ".md";
+			// Create filename with the date prefix for uniqueness, keeping spaces instead of underscores
+			const filename = `${title}.md`;
 			const filepath = `${this.settings.outputFolder}/${filename}`;
 			
 			// Write to file using Obsidian API
@@ -193,6 +329,7 @@ updated_at: ${formatDateForObsidian(updatedAtDate)}
 			return true;
 		} catch (error) {
 			console.error(`Error processing document '${doc.title || "Untitled"}':`, error);
+			console.error("Stack trace:", error.stack);
 			return false;
 		}
 	}
@@ -254,8 +391,58 @@ updated_at: ${formatDateForObsidian(updatedAtDate)}
 				filename += char;
 			}
 		}
-		// Replace spaces with underscores
-		return filename.replace(/ /g, '_');
+		// Don't replace spaces with underscores anymore
+		return filename;
+	}
+
+	// Helper function to extract a name from an email address
+	extractNameFromEmail(email: string): string {
+		// Extract the part before @ 
+		const username = email.split('@')[0];
+		
+		// Handle common email formats
+		
+		// Format: firstname.lastname@domain.com → Firstname Lastname
+		if (username.includes('.')) {
+			return username.split('.')
+				.map(namePart => this.capitalizeFirstLetter(namePart))
+				.join(' ');
+		}
+		
+		// Format: firstnamelastname@domain.com
+		// Try to split at capital letters: johnDoe → John Doe
+		if (/[A-Z]/.test(username) && username.toLowerCase() !== username) {
+			// Split at capital letters
+			const nameParts = username.split(/(?=[A-Z])/)
+				.map(namePart => this.capitalizeFirstLetter(namePart));
+			return nameParts.join(' ');
+		}
+		
+		// Format: firstname_lastname@domain.com → Firstname Lastname
+		if (username.includes('_')) {
+			return username.split('_')
+				.map(namePart => this.capitalizeFirstLetter(namePart))
+				.join(' ');
+		}
+		
+		// Format: firstnamelastname@domain.com without caps
+		// If no structure detected but name is long, try to split it
+		// at a common point (assume 60% is first name, 40% is last name)
+		if (username.length > 5) {
+			const splitPoint = Math.floor(username.length * 0.6);
+			const firstName = this.capitalizeFirstLetter(username.substring(0, splitPoint));
+			const lastName = this.capitalizeFirstLetter(username.substring(splitPoint));
+			return `${firstName} ${lastName}`;
+		}
+		
+		// If all else fails, just return the capitalized username
+		return this.capitalizeFirstLetter(username);
+	}
+
+	// Helper to capitalize the first letter of a string
+	capitalizeFirstLetter(str: string): string {
+		if (!str || str.length === 0) return str;
+		return str.charAt(0).toUpperCase() + str.slice(1);
 	}
 }
 
@@ -293,6 +480,17 @@ class GranolaSettingTab extends PluginSettingTab {
 				.setValue(this.plugin.settings.apiToken)
 				.onChange(async (value) => {
 					this.plugin.settings.apiToken = value;
+					await this.plugin.saveSettings();
+				}));
+				
+		new Setting(containerEl)
+			.setName('Company Name')
+			.setDesc('Your company name (optional, will appear as org: [[Company]] in frontmatter)')
+			.addText(text => text
+				.setPlaceholder('Enter your company name')
+				.setValue(this.plugin.settings.companyName)
+				.onChange(async (value) => {
+					this.plugin.settings.companyName = value;
 					await this.plugin.saveSettings();
 				}));
 				
