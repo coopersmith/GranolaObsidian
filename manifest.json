@@ -1,0 +1,10 @@
+{
+	"id": "granola-obsidian",
+	"name": "Granola Notes Sync",
+	"version": "1.0.0",
+	"minAppVersion": "0.15.0",
+	"description": "Sync your Granola notes to Obsidian",
+	"author": "GranolaObsidian",
+	"authorUrl": "https://github.com/GranolaObsidian",
+	"isDesktopOnly": true
+} 
