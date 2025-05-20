@@ -60,7 +60,17 @@ export default class GranolaPlugin extends Plugin {
 			}
 			
 			// Fetch the documents
-			const documents = await this.fetchGranolaDocuments(this.settings.apiToken);
+			let documents;
+			try {
+				documents = await this.fetchGranolaDocuments(this.settings.apiToken);
+			} catch (error) {
+				// If this is an authentication error, show a notice but don't show the generic error
+				if (error.message && error.message.includes('Authentication failed')) {
+					return; // Already showed a notice in fetchGranolaDocuments
+				}
+				throw error; // Re-throw other errors to be caught by the outer catch
+			}
+			
 			if (!documents || documents.length === 0) {
 				new Notice('No Granola notes found or error fetching notes.');
 				return;
@@ -123,7 +133,11 @@ export default class GranolaPlugin extends Plugin {
 			});
 			
 			if (response.status !== 200) {
-				throw new Error(`HTTP error! status: ${response.status}`);
+				if (response.status === 401) {
+					throw new Error(`Authentication failed: Your Granola API token has expired (status: 401)`);
+				} else {
+					throw new Error(`HTTP error! status: ${response.status}`);
+				}
 			}
 			
 			const result = response.json;
@@ -142,6 +156,22 @@ export default class GranolaPlugin extends Plugin {
 			return docs;
 		} catch (error) {
 			console.error('Error fetching documents:', error);
+			
+			// Check if this is an authentication error (401)
+			if (error.message && (
+				error.message.includes('status 401') || 
+				error.message.includes('Authentication failed') || 
+				(error.status === 401) || 
+				(error.response && error.response.status === 401)
+			)) {
+				// Show a more helpful message for authentication errors
+				new Notice('Authentication failed: Your Granola API token is invalid or has expired. Please update it in settings.');
+				
+				// Throw a more specific error
+				throw new Error('Authentication failed: Your Granola API token is invalid or has expired.');
+			}
+			
+			// For other errors, return empty array
 			return [];
 		}
 	}
@@ -522,6 +552,7 @@ class GranolaSettingTab extends PluginSettingTab {
 				<li>Find the Authorization header with format <code>Bearer &lt;token&gt;</code></li>
 				<li>Copy the token part</li>
 			</ol>
+			<p><strong>Important:</strong> Granola API tokens expire periodically. If you see a 401 authentication error, you'll need to get a fresh token using the steps above.</p>
 		`;
 	}
 }

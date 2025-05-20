@@ -43,6 +43,10 @@ This plugin syncs your [Granola](https://granola.ai) notes to your Obsidian vaul
    - Find the Authorization header with format `Bearer <token>`
    - Copy the token part
 
+   **Note about API token expiration:**
+   Granola API tokens typically expire every 1-7 days. If you see a 401 authentication error when syncing, 
+   you'll need to generate a new token using one of the methods above and update it in your plugin settings.
+
 2. In Obsidian, go to Settings → Granola Notes Sync
 3. Paste your API token in the "API Token" field
 4. Configure your desired output folder
@@ -51,6 +55,15 @@ This plugin syncs your [Granola](https://granola.ai) notes to your Obsidian vaul
 
 1. Click the sync icon in the left sidebar or run the "Sync Granola Notes" command
 2. The plugin will fetch your Granola notes and save them as Markdown files in the specified folder
+
+## Troubleshooting
+
+### Authentication errors (401)
+If you see errors like "Error fetching documents: Error: Request failed, status 401" or "Authentication failed" notifications:
+1. Your Granola API token has likely expired
+2. Generate a new token using the methods described in the Setup section
+3. Update the token in Obsidian Settings → Granola Notes Sync
+4. Try syncing again
 
 ## Requirements
 
