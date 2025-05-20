@@ -11,7 +11,7 @@ This plugin syncs your [Granola](https://granola.ai) notes to your Obsidian vaul
 
 ## Installation
 
-### From Obsidian
+### From Obsidian (Coming soon)
 
 1. Open Settings in Obsidian
 2. Go to Community Plugins and turn off Safe Mode
