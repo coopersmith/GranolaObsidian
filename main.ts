@@ -92,13 +92,29 @@ export default class GranolaPlugin extends Plugin {
 			"User-Agent": "Granola/5.354.0",
 			"X-Client-Version": "5.354.0"
 		};
+		
+		// Create a date for 7 days ago to get recent documents
+		const sevenDaysAgo = new Date();
+		sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
+		
+		// Log the sync parameters
+		console.log(`Syncing documents since: ${sevenDaysAgo.toISOString()}`);
+		
+		// Request parameters
 		const data = {
-			"limit": 100,
+			"limit": 200, // Increased from 100 to get more documents
 			"offset": 0,
-			"include_last_viewed_panel": true
+			"include_last_viewed_panel": true,
+			// Add a sort parameter to get newest first
+			"sort": {
+				"field": "created_at",
+				"order": "desc"
+			}
 		};
 		
 		try {
+			// First request - get everything
+			console.log("Fetching documents from Granola API...");
 			const response = await requestUrl({
 				url: url,
 				method: 'POST',
@@ -111,7 +127,19 @@ export default class GranolaPlugin extends Plugin {
 			}
 			
 			const result = response.json;
-			return result.docs || [];
+			const docs = result.docs || [];
+			
+			console.log(`Retrieved ${docs.length} documents from Granola API`);
+			
+			// Debug: Log the first few documents' titles and created dates
+			if (docs.length > 0) {
+				console.log("Sample of documents retrieved:");
+				docs.slice(0, 5).forEach((doc: any) => {
+					console.log(`- Title: ${doc.title}, Created: ${doc.created_at}`);
+				});
+			}
+			
+			return docs;
 		} catch (error) {
 			console.error('Error fetching documents:', error);
 			return [];
@@ -286,12 +314,11 @@ created_at: ${formatDateWithOffset(doc.created_at)}
 				// Format as a simple YAML string array
 				frontmatter += `people: [`;
 				
-				// Join emails with commas, use extracted names for links
+				// Join emails with commas, use email addresses directly
 				const emailList = attendees.map(attendee => {
 					const email = attendee.email;
-					const name = this.extractNameFromEmail(email);
-					// Just link to the name directly, not the email
-					return `"[[${name}]]"`;
+					// Just use the email address as is
+					return `"[[${email}]]"`;
 				}).join(", ");
 				
 				frontmatter += `${emailList}]\n`;
@@ -314,35 +341,29 @@ created_at: ${formatDateWithOffset(doc.created_at)}
 			const finalMarkdown = frontmatter + markdownContent;
 			
 			// Create filename with the date prefix for uniqueness, keeping spaces instead of underscores
-			const filename = `${title}.md`;
-			const filepath = `${this.settings.outputFolder}/${filename}`;
-			
-			// Write to file using Obsidian API
-			const existingFile = this.app.vault.getAbstractFileByPath(filepath);
-			if (existingFile instanceof TFile) {
-				await this.app.vault.modify(existingFile, finalMarkdown);
-			} else {
-				await this.app.vault.create(filepath, finalMarkdown);
-			}
-			
-			console.log(`Successfully saved: ${filepath}`);
+			const filename = this.sanitizeFilename(`${title}.md`);
+			const filepath = `${this.settings.outputFolder}/${filename}`
+
+			// Save the file
+			await this.app.vault.create(filepath, finalMarkdown);
+			console.log(`Saved document: ${filepath}`);
+
 			return true;
 		} catch (error) {
-			console.error(`Error processing document '${doc.title || "Untitled"}':`, error);
-			console.error("Stack trace:", error.stack);
+			console.error('Error processing document:', error);
 			return false;
 		}
 	}
 	
 	convertProseMirrorToMarkdown(content: any): string {
 		if (!content || !content.content) {
-			return "";
+			return '';
 		}
 		
 		const result: string[] = [];
 		
 		const processNode = (node: any): string => {
-			if (!node) return "";
+			if (!node) return '';
 			
 			const nodeType = node.type || '';
 			const nodeContent = node.content || [];
@@ -353,11 +374,11 @@ created_at: ${formatDateWithOffset(doc.created_at)}
 					const level = node.attrs?.level || 1;
 					const headingText = nodeContent.map(processNode).join('');
 					return `${'#'.repeat(level)} ${headingText}\n\n`;
-					
+				
 				case 'paragraph':
 					const paraText = nodeContent.map(processNode).join('');
 					return `${paraText}\n\n`;
-					
+				
 				case 'bulletList':
 					return nodeContent.map((item: any) => {
 						if (item.type === 'listItem') {
@@ -366,10 +387,10 @@ created_at: ${formatDateWithOffset(doc.created_at)}
 						}
 						return '';
 					}).filter(Boolean).join('\n') + '\n\n';
-					
+				
 				case 'text':
 					return text;
-					
+				
 				default:
 					return nodeContent.map(processNode).join('');
 			}
@@ -383,51 +404,41 @@ created_at: ${formatDateWithOffset(doc.created_at)}
 	}
 	
 	sanitizeFilename(title: string): string {
-		// Remove invalid characters
+		// Include all invalid characters including forward slash
 		const invalidChars = '<>:"/\\|?*';
-		let filename = '';
+		let filename = "";
+		
+		// Replace each invalid character with an appropriate substitute
 		for (const char of title) {
 			if (!invalidChars.includes(char)) {
 				filename += char;
+			} else if (char === '/') {
+				// Replace forward slashes with a hyphen or another safe character
+				filename += '-';
 			}
+			// Simply skip other invalid characters
 		}
-		// Don't replace spaces with underscores anymore
+		
 		return filename;
 	}
-
+	
 	// Helper function to extract a name from an email address
 	extractNameFromEmail(email: string): string {
-		// Extract the part before @ 
 		const username = email.split('@')[0];
 		
-		// Handle common email formats
-		
-		// Format: firstname.lastname@domain.com → Firstname Lastname
 		if (username.includes('.')) {
-			return username.split('.')
-				.map(namePart => this.capitalizeFirstLetter(namePart))
-				.join(' ');
+			return username.split('.').map(namePart => this.capitalizeFirstLetter(namePart)).join(' ');
 		}
 		
-		// Format: firstnamelastname@domain.com
-		// Try to split at capital letters: johnDoe → John Doe
 		if (/[A-Z]/.test(username) && username.toLowerCase() !== username) {
-			// Split at capital letters
-			const nameParts = username.split(/(?=[A-Z])/)
-				.map(namePart => this.capitalizeFirstLetter(namePart));
+			const nameParts = username.split(/(?=[A-Z])/).map(namePart => this.capitalizeFirstLetter(namePart));
 			return nameParts.join(' ');
 		}
 		
-		// Format: firstname_lastname@domain.com → Firstname Lastname
 		if (username.includes('_')) {
-			return username.split('_')
-				.map(namePart => this.capitalizeFirstLetter(namePart))
-				.join(' ');
+			return username.split('_').map(namePart => this.capitalizeFirstLetter(namePart)).join(' ');
 		}
 		
-		// Format: firstnamelastname@domain.com without caps
-		// If no structure detected but name is long, try to split it
-		// at a common point (assume 60% is first name, 40% is last name)
 		if (username.length > 5) {
 			const splitPoint = Math.floor(username.length * 0.6);
 			const firstName = this.capitalizeFirstLetter(username.substring(0, splitPoint));
@@ -435,10 +446,9 @@ created_at: ${formatDateWithOffset(doc.created_at)}
 			return `${firstName} ${lastName}`;
 		}
 		
-		// If all else fails, just return the capitalized username
 		return this.capitalizeFirstLetter(username);
 	}
-
+	
 	// Helper to capitalize the first letter of a string
 	capitalizeFirstLetter(str: string): string {
 		if (!str || str.length === 0) return str;
@@ -455,11 +465,11 @@ class GranolaSettingTab extends PluginSettingTab {
 	}
 
 	display(): void {
-		const {containerEl} = this;
+		const { containerEl } = this;
 
 		containerEl.empty();
 
-		containerEl.createEl('h2', {text: 'Granola Notes Sync Settings'});
+		containerEl.createEl('h2', { text: 'Granola Notes Sync Settings' });
 
 		new Setting(containerEl)
 			.setName('Output folder')
@@ -471,7 +481,7 @@ class GranolaSettingTab extends PluginSettingTab {
 					this.plugin.settings.outputFolder = value;
 					await this.plugin.saveSettings();
 				}));
-				
+
 		new Setting(containerEl)
 			.setName('API Token')
 			.setDesc('Your Granola API token (see below for how to find this)')
@@ -494,8 +504,7 @@ class GranolaSettingTab extends PluginSettingTab {
 					await this.plugin.saveSettings();
 				}));
 				
-		containerEl.createEl('h3', {text: 'How to find your API token'});
-		
+		containerEl.createEl('h3', { text: 'How to find your API token' });
 		const instructions = containerEl.createEl('div');
 		instructions.innerHTML = `
 			<p>To find your Granola API token:</p>
@@ -515,4 +524,4 @@ class GranolaSettingTab extends PluginSettingTab {
 			</ol>
 		`;
 	}
-} 
+}
