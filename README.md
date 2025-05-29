@@ -50,6 +50,23 @@ This plugin syncs your [Granola](https://granola.ai) notes to your Obsidian vaul
 2. In Obsidian, go to Settings → Granola Notes Sync
 3. Paste your API token in the "API Token" field
 4. Configure your desired output folder
+5. (Optional) Configure a name mapping file to accurately display people's names
+
+## Email-to-Name Mapping
+
+The plugin attempts to extract people's names from their email addresses for better display in your notes. However, this is just a best-effort guess. For accurate name display:
+
+1. Create a CSV file in your vault (for example, `email-names.csv`)
+2. Format it with email addresses in the first column and full names in the second:
+   ```
+   email,name
+   coopersmith@company.com,Cooper Smith
+   john.doe@example.com,John Doe
+   ```
+3. In the plugin settings, set the "Name Map File Path" to the location of your CSV file
+4. Click "Reload Map" to load the mappings
+
+The plugin will then use these names when linking to people, displaying `[[Cooper Smith|coopersmith@example.com]]` instead of guessing the name.
 
 ## Usage
 

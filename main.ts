@@ -4,19 +4,27 @@ interface GranolaPluginSettings {
 	outputFolder: string;
 	apiToken: string;
 	companyName: string;
+	usePipeAliases: boolean;
+	nameMapFilePath: string;
 }
 
 const DEFAULT_SETTINGS: GranolaPluginSettings = {
 	outputFolder: 'Granola',
 	apiToken: '',
-	companyName: ''
+	companyName: '',
+	usePipeAliases: true,
+	nameMapFilePath: ''
 }
 
 export default class GranolaPlugin extends Plugin {
 	settings: GranolaPluginSettings;
+	nameMap: Map<string, string> = new Map(); // Email to name mapping
 
 	async onload() {
 		await this.loadSettings();
+		
+		// Load name database if configured
+		await this.loadNameMap();
 
 		// This adds a settings tab so the user can configure various aspects of the plugin
 		this.addSettingTab(new GranolaSettingTab(this.app, this));
@@ -347,8 +355,17 @@ created_at: ${formatDateWithOffset(doc.created_at)}
 				// Join emails with commas, use email addresses directly
 				const emailList = attendees.map(attendee => {
 					const email = attendee.email;
-					// Just use the email address as is
-					return `"[[${email}]]"`;
+					// Convert email to a display name for better readability
+					const displayName = this.extractNameFromEmail(email);
+					
+					// Format the link based on the settings
+					if (this.settings.usePipeAliases) {
+						// Format as "[[Personname|email@example.com]]" to handle aliases correctly
+						return `"[[${displayName}|${email}]]"`;
+					} else {
+						// Just use the email address as direct link
+						return `"[[${email}]]"`;
+					}
 				}).join(", ");
 				
 				frontmatter += `${emailList}]\n`;
@@ -452,30 +469,91 @@ created_at: ${formatDateWithOffset(doc.created_at)}
 		return filename;
 	}
 	
-	// Helper function to extract a name from an email address
+	// Load the CSV name mapping file if it exists
+	async loadNameMap() {
+		if (!this.settings.nameMapFilePath) return;
+		
+		try {
+			// Get the file from the vault
+			const file = this.app.vault.getAbstractFileByPath(this.settings.nameMapFilePath);
+			
+			if (file instanceof TFile) {
+				// Read and parse the CSV content
+				const content = await this.app.vault.read(file);
+				const lines = content.split('\n');
+				
+				// Clear existing map
+				this.nameMap.clear();
+				
+				// Skip header line if present
+				const startLine = lines[0].toLowerCase().includes('email') ? 1 : 0;
+				
+				// Parse each line as email,name
+				for (let i = startLine; i < lines.length; i++) {
+					const line = lines[i];
+					if (!line.trim()) continue;
+					
+					// Split by comma, but handle cases with commas in names
+					const match = line.match(/^([^,]+),(.+)$/);
+					if (match) {
+						const [_, email, name] = match;
+						// Make sure to trim any whitespace from both email and name
+						this.nameMap.set(email.trim().toLowerCase(), name.trim());
+					}
+				}
+				
+				console.log(`Loaded ${this.nameMap.size} name mappings from ${this.settings.nameMapFilePath}`);
+			}
+		} catch (error) {
+			console.error('Error loading name mapping file:', error);
+			new Notice(`Failed to load name mapping file: ${error.message}`);
+		}
+	}
+	
+	// Update the extractNameFromEmail function to first check the database
 	extractNameFromEmail(email: string): string {
+		if (!email || !email.includes('@')) return email;
+		
+		// First check our mapping database
+		const lowercaseEmail = email.toLowerCase();
+		const mappedName = this.nameMap.get(lowercaseEmail);
+		if (mappedName) return mappedName;
+		
+		// Fall back to extracting from email
 		const username = email.split('@')[0];
 		
+		// Handle common name formats in emails
 		if (username.includes('.')) {
+			// Format: first.last@domain.com
 			return username.split('.').map(namePart => this.capitalizeFirstLetter(namePart)).join(' ');
 		}
 		
 		if (/[A-Z]/.test(username) && username.toLowerCase() !== username) {
+			// Format: FirstLast@domain.com or firstLast@domain.com
 			const nameParts = username.split(/(?=[A-Z])/).map(namePart => this.capitalizeFirstLetter(namePart));
 			return nameParts.join(' ');
 		}
 		
 		if (username.includes('_')) {
+			// Format: first_last@domain.com
 			return username.split('_').map(namePart => this.capitalizeFirstLetter(namePart)).join(' ');
 		}
 		
+		if (username.includes('-')) {
+			// Format: first-last@domain.com
+			return username.split('-').map(namePart => this.capitalizeFirstLetter(namePart)).join(' ');
+		}
+		
+		// For usernames with no separator but of reasonable length, try to split into first/last name
 		if (username.length > 5) {
+			// Simple heuristic - split at 60% point for first name
 			const splitPoint = Math.floor(username.length * 0.6);
 			const firstName = this.capitalizeFirstLetter(username.substring(0, splitPoint));
 			const lastName = this.capitalizeFirstLetter(username.substring(splitPoint));
 			return `${firstName} ${lastName}`;
 		}
 		
+		// Default to just capitalizing the username
 		return this.capitalizeFirstLetter(username);
 	}
 	
@@ -534,6 +612,38 @@ class GranolaSettingTab extends PluginSettingTab {
 					await this.plugin.saveSettings();
 				}));
 				
+		new Setting(containerEl)
+			.setName('Use Pipe Aliases')
+			.setDesc('When enabled, links to people will have display names (e.g., [[Cooper Smith|coopersmith@example.com]]). When disabled, links will use the email directly ([[coopersmith@example.com]]).')
+			.addToggle(toggle => toggle
+				.setValue(this.plugin.settings.usePipeAliases)
+				.onChange(async (value) => {
+					this.plugin.settings.usePipeAliases = value;
+					await this.plugin.saveSettings();
+				}));
+				
+		new Setting(containerEl)
+			.setName('Name Map File Path')
+			.setDesc('The path to a CSV file containing email-to-name mappings')
+			.addText(text => text
+				.setPlaceholder('Enter the path to the name map file')
+				.setValue(this.plugin.settings.nameMapFilePath)
+				.onChange(async (value) => {
+					this.plugin.settings.nameMapFilePath = value;
+					await this.plugin.saveSettings();
+				}))
+			.addButton(button => button
+				.setButtonText('Reload Map')
+				.onClick(async () => {
+					await this.plugin.loadNameMap();
+					new Notice(`Reloaded name map from ${this.plugin.settings.nameMapFilePath}`);
+				}));
+				
+		// Add instructions for name map file
+		containerEl.createEl('div', { cls: 'setting-item-description', text: 'The name map file should be a CSV with email addresses in the first column and the full name in the second column. For example:' });
+		const csvExample = containerEl.createEl('pre', { cls: 'setting-item-description' });
+		csvExample.setText('coopersmith@example.com,Cooper Smith\njanesmith@example.com,Jane Smith');
+
 		containerEl.createEl('h3', { text: 'How to find your API token' });
 		const instructions = containerEl.createEl('div');
 		instructions.innerHTML = `
