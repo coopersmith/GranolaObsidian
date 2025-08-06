@@ -409,37 +409,43 @@ created_at: ${formatDateWithOffset(doc.created_at)}
 		
 		const result: string[] = [];
 		
-		const processNode = (node: any): string => {
+		const processNode = (node: any, indent = 0): string => {
 			if (!node) return '';
-			
+
 			const nodeType = node.type || '';
 			const nodeContent = node.content || [];
 			const text = node.text || '';
-			
+
 			switch (nodeType) {
 				case 'heading':
 					const level = node.attrs?.level || 1;
-					const headingText = nodeContent.map(processNode).join('');
+					const headingText = nodeContent.map((n: any) => processNode(n, indent)).join('');
 					return `${'#'.repeat(level)} ${headingText}\n\n`;
-				
+
 				case 'paragraph':
-					const paraText = nodeContent.map(processNode).join('');
+					const paraText = nodeContent.map((n: any) => processNode(n, indent)).join('');
 					return `${paraText}\n\n`;
-				
+
 				case 'bulletList':
-					return nodeContent.map((item: any) => {
-						if (item.type === 'listItem') {
-							const itemContent = (item.content || []).map(processNode).join('');
-							return `- ${itemContent.trim()}`;
-						}
-						return '';
-					}).filter(Boolean).join('\n') + '\n\n';
-				
+					return nodeContent
+						.map((item: any) => {
+							if (item.type === 'listItem') {
+								const parts = (item.content || []).map((n: any) => processNode(n, indent + 1));
+								const first = (parts.shift() || '').trim();
+								const rest = parts.join('').trimEnd();
+								const nested = rest ? `\n${rest}` : '';
+								return `${'  '.repeat(indent)}- ${first}${nested}`;
+							}
+							return '';
+						})
+						.filter(Boolean)
+						.join('\n') + '\n\n';
+
 				case 'text':
 					return text;
-				
+
 				default:
-					return nodeContent.map(processNode).join('');
+					return nodeContent.map((n: any) => processNode(n, indent)).join('');
 			}
 		};
 		
