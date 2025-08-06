@@ -335,7 +335,7 @@ export default class GranolaPlugin extends Plugin {
 			let frontmatter = 
 `---
 title: "${title.replace(/"/g, '\\"')}"
-category: "[[Meetings]]"
+categories: "[[Meetings]]"
 type: 
 created_at: ${formatDateWithOffset(doc.created_at)}
 `;
