@@ -258,10 +258,7 @@ export default class GranolaPlugin extends Plugin {
 			// Extract and format the creation date for title prefixing
 			const createdAtDate = doc.created_at ? new Date(doc.created_at) : new Date();
 			
-			// Apply timezone offset to display local time
-			const offsetHours = createdAtDate.getTimezoneOffset() / -60;
-			
-			// Format date components for prefixing the title
+                // Format date components for prefixing the title
 			const year = createdAtDate.getFullYear();
 			const month = String(createdAtDate.getMonth() + 1).padStart(2, '0');
 			const day = String(createdAtDate.getDate()).padStart(2, '0');
@@ -295,13 +292,24 @@ export default class GranolaPlugin extends Plugin {
 			// Convert to markdown
 			const markdownContent = this.convertProseMirrorToMarkdown(contentToParse);
 			
-			// Format dates with timezone offset display
-			const formatDateWithOffset = (dateString: string | null) => {
-				if (!dateString) return new Date().toISOString();
-				
-				const date = new Date(dateString);
-				return date.toISOString();
-			};
+                // Format dates with local timezone offset (e.g., 2023-09-13T10:00:00-04:00)
+                const formatDateWithOffset = (dateString: string | null) => {
+                                const date = dateString ? new Date(dateString) : new Date();
+
+                                // getTimezoneOffset returns minutes *behind* UTC. Positive for zones west of UTC.
+                                const tzOffsetMinutes = date.getTimezoneOffset();
+
+                                // Shift the date by the offset so toISOString returns local time components
+                                const adjustedDate = new Date(date.getTime() - tzOffsetMinutes * 60000);
+                                const iso = adjustedDate.toISOString().slice(0, -1); // remove trailing 'Z'
+
+                                const sign = tzOffsetMinutes > 0 ? '-' : '+';
+                                const pad = (num: number) => String(Math.abs(Math.floor(num))).padStart(2, '0');
+                                const hours = pad(tzOffsetMinutes / 60);
+                                const minutes = pad(tzOffsetMinutes % 60);
+
+                                return `${iso}${sign}${hours}:${minutes}`;
+                        };
 			
 			// Extract attendees with deep inspection
 			let attendees: {email: string, role?: string}[] = [];
