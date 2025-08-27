@@ -28,12 +28,18 @@ This plugin syncs your [Granola](https://granola.ai) notes to your Obsidian vaul
 ## Setup
 
 1. Find your Granola API token using one of these methods:
+
+   > **Note:** Granola recently switched from Cognito to WorkOS for authentication. The old `cat ~/Library/Application Support/Granola/supabase.json` command shows a stale `cognito_tokens` entry. Use the following `jq` command to extract whichever token is currently valid.
+
    
-   **Method 1: Using Terminal**
+   **Method 1: Using Terminal (new command)**
+   ```bash
+   FILE="$HOME/Library/Application Support/Granola/supabase.json"
+   jq -r ' (try (.workos_tokens | fromjson | .access_token) // empty) as $w
+     | (try (.cognito_tokens | fromjson | .access_token) // empty) as $c
+     | if ($w|length)>0 then $w else $c end' "$FILE"
    ```
-   cat ~/Library/Application\ Support/Granola/supabase.json
-   ```
-   Find the `cognito_tokens` JSON string, and extract the `access_token` value.
+   This command prints your current Granola access token. It prefers the new `workos_tokens` entry and falls back to the older `cognito_tokens` value if needed.
    
    **Method 2: Using Developer Tools**
    - Open Granola app
@@ -44,8 +50,8 @@ This plugin syncs your [Granola](https://granola.ai) notes to your Obsidian vaul
    - Copy the token part
 
    **Note about API token expiration:**
-   Granola API tokens typically expire every 1-7 days. If you see a 401 authentication error when syncing, 
-   you'll need to generate a new token using one of the methods above and update it in your plugin settings.
+   Granola API tokens expire regularly (often within a day). If you see a 401 authentication error when syncing,
+   run the command above again to obtain a fresh token and update it in your plugin settings.
 
 2. In Obsidian, go to Settings → Granola Notes Sync
 3. Paste your API token in the "API Token" field
