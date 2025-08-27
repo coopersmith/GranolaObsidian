@@ -660,23 +660,26 @@ class GranolaSettingTab extends PluginSettingTab {
 
 		containerEl.createEl('h3', { text: 'How to find your API token' });
 		const instructions = containerEl.createEl('div');
-		instructions.innerHTML = `
-			<p>To find your Granola API token:</p>
-			<ol>
-				<li>Open terminal and run: <code>cat ~/Library/Application\\ Support/Granola/supabase.json</code></li>
-				<li>Find the JSON string in <code>cognito_tokens</code></li>
-				<li>Copy the <code>access_token</code> value</li>
-			</ol>
-			<p>Or, if you have developer tools:</p>
-			<ol>
-				<li>Open Granola app</li>
-				<li>Open developer tools (View → Developer → Toggle Developer Tools)</li>
-				<li>Go to Network tab</li>
-				<li>Look for requests to <code>api.granola.ai</code></li>
-				<li>Find the Authorization header with format <code>Bearer &lt;token&gt;</code></li>
-				<li>Copy the token part</li>
-			</ol>
-			<p><strong>Important:</strong> Granola API tokens expire periodically. If you see a 401 authentication error, you'll need to get a fresh token using the steps above.</p>
-		`;
+                instructions.innerHTML = `
+                        <p>To find your Granola API token:</p>
+                        <ol>
+                                <li>Run the following in your terminal to print your current token:</li>
+                                <pre><code>FILE="$HOME/Library/Application Support/Granola/supabase.json"
+jq -r ' (try (.workos_tokens | fromjson | .access_token) // empty) as $w
+  | (try (.cognito_tokens | fromjson | .access_token) // empty) as $c
+  | if ($w|length)>0 then $w else $c end' "$FILE"</code></pre>
+                                <li>Copy the printed token</li>
+                        </ol>
+                        <p>Or, if you have developer tools:</p>
+                        <ol>
+                                <li>Open Granola app</li>
+                                <li>Open developer tools (View → Developer → Toggle Developer Tools)</li>
+                                <li>Go to Network tab</li>
+                                <li>Look for requests to <code>api.granola.ai</code></li>
+                                <li>Find the Authorization header with format <code>Bearer &lt;token&gt;</code></li>
+                                <li>Copy the token part</li>
+                        </ol>
+                        <p><strong>Important:</strong> Granola API tokens expire regularly. If you see a 401 authentication error, run the command above again to obtain a fresh token.</p>
+                `;
 	}
 }
