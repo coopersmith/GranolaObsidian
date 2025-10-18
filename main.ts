@@ -607,7 +607,7 @@ created_at: ${formatDateWithOffset(doc.created_at)}
 			const pattern = new RegExp(`(?<!\\[\\[)\\b(${escapedName})\\b(?!\\]\\])`, 'g');
 			
 			// Replace with backlink
-			modifiedContent = modifiedContent.replace(pattern, '[[$$1]]');
+			modifiedContent = modifiedContent.replace(pattern, '[[$1]]');
 		}
 		
 		return modifiedContent;
@@ -638,7 +638,7 @@ created_at: ${formatDateWithOffset(doc.created_at)}
 			const pattern = new RegExp(`(?<!\\[\\[)\\b(${escapedTopic})\\b(?!\\]\\])`, 'gi');
 			
 			// Replace with backlink, preserving the original case
-			modifiedContent = modifiedContent.replace(pattern, '[[$$1]]');
+			modifiedContent = modifiedContent.replace(pattern, '[[$1]]');
 		}
 		
 		return modifiedContent;
