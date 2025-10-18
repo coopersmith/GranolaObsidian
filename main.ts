@@ -6,6 +6,7 @@ interface GranolaPluginSettings {
 	companyName: string;
 	usePipeAliases: boolean;
 	nameMapFilePath: string;
+	linkableTopics: string;
 }
 
 const DEFAULT_SETTINGS: GranolaPluginSettings = {
@@ -13,7 +14,8 @@ const DEFAULT_SETTINGS: GranolaPluginSettings = {
 	apiToken: '',
 	companyName: '',
 	usePipeAliases: true,
-	nameMapFilePath: ''
+	nameMapFilePath: '',
+	linkableTopics: ''
 }
 
 export default class GranolaPlugin extends Plugin {
@@ -290,7 +292,7 @@ export default class GranolaPlugin extends Plugin {
 			}
 			
 			// Convert to markdown
-			const markdownContent = this.convertProseMirrorToMarkdown(contentToParse);
+			let markdownContent = this.convertProseMirrorToMarkdown(contentToParse);
 			
                 // Format dates with local timezone offset (e.g., 2023-09-13T10:00:00-04:00)
                 const formatDateWithOffset = (dateString: string | null) => {
@@ -338,6 +340,10 @@ export default class GranolaPlugin extends Plugin {
 			}
 			
 			console.log("DEBUG - Final attendees array:", attendees);
+			
+			// Apply backlinks for person mentions and topics
+			markdownContent = this.addPersonBacklinks(markdownContent, attendees);
+			markdownContent = this.addTopicBacklinks(markdownContent);
 			
 			// Build frontmatter in the requested order with new properties
 			let frontmatter = 
@@ -576,6 +582,67 @@ created_at: ${formatDateWithOffset(doc.created_at)}
 		if (!str || str.length === 0) return str;
 		return str.charAt(0).toUpperCase() + str.slice(1);
 	}
+	
+	// Add backlinks for person mentions in content
+	addPersonBacklinks(content: string, attendees: {email: string, role?: string}[]): string {
+		if (!attendees || attendees.length === 0) return content;
+		
+		let modifiedContent = content;
+		
+		// For each attendee, get their display name and add backlinks
+		for (const attendee of attendees) {
+			const displayName = this.extractNameFromEmail(attendee.email);
+			
+			// Skip if the name is just an email or too short
+			if (!displayName || displayName.includes('@') || displayName.length < 3) continue;
+			
+			// Create a regex pattern that matches the name with word boundaries
+			// Use negative lookbehind and lookahead to avoid matching inside existing [[...]]
+			// Escape special regex characters
+			const escapedName = displayName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+			
+			// This pattern ensures we don't match text that's already inside [[ ]]
+			// Using negative lookbehind (?<!\[\[) would be ideal but isn't supported in all environments
+			// So we'll do a simpler approach: just avoid strings that already have [[ before them
+			const pattern = new RegExp(`(?<!\\[\\[)\\b(${escapedName})\\b(?!\\]\\])`, 'g');
+			
+			// Replace with backlink
+			modifiedContent = modifiedContent.replace(pattern, '[[$$1]]');
+		}
+		
+		return modifiedContent;
+	}
+	
+	// Add backlinks for configured topics in content
+	addTopicBacklinks(content: string): string {
+		if (!this.settings.linkableTopics || this.settings.linkableTopics.trim() === '') {
+			return content;
+		}
+		
+		// Parse comma-separated topics
+		const topics = this.settings.linkableTopics
+			.split(',')
+			.map(topic => topic.trim())
+			.filter(topic => topic.length > 0);
+		
+		if (topics.length === 0) return content;
+		
+		let modifiedContent = content;
+		
+		// For each topic, add backlinks
+		for (const topic of topics) {
+			// Escape special regex characters
+			const escapedTopic = topic.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+			
+			// Pattern that avoids matching inside existing [[ ]]
+			const pattern = new RegExp(`(?<!\\[\\[)\\b(${escapedTopic})\\b(?!\\]\\])`, 'gi');
+			
+			// Replace with backlink, preserving the original case
+			modifiedContent = modifiedContent.replace(pattern, '[[$$1]]');
+		}
+		
+		return modifiedContent;
+	}
 }
 
 class GranolaSettingTab extends PluginSettingTab {
@@ -657,6 +724,17 @@ class GranolaSettingTab extends PluginSettingTab {
 		containerEl.createEl('div', { cls: 'setting-item-description', text: 'The name map file should be a CSV with email addresses in the first column and the full name in the second column. For example:' });
 		const csvExample = containerEl.createEl('pre', { cls: 'setting-item-description' });
 		csvExample.setText('coopersmith@example.com,Cooper Smith\njanesmith@example.com,Jane Smith');
+
+		new Setting(containerEl)
+			.setName('Linkable Topics')
+			.setDesc('Comma-separated list of topics to automatically link in notes (e.g., "Product Strategy, Team Sync, Q4 Planning")')
+			.addTextArea(text => text
+				.setPlaceholder('Enter topics separated by commas')
+				.setValue(this.plugin.settings.linkableTopics)
+				.onChange(async (value) => {
+					this.plugin.settings.linkableTopics = value;
+					await this.plugin.saveSettings();
+				}));
 
 		containerEl.createEl('h3', { text: 'How to find your API token' });
 		const instructions = containerEl.createEl('div');
