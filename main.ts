@@ -1,8 +1,11 @@
-import { App, Editor, MarkdownView, Modal, Notice, Plugin, PluginSettingTab, Setting, TFolder, TFile, TAbstractFile, requestUrl } from 'obsidian';
+import { App, Editor, MarkdownView, Modal, Notice, Plugin, PluginSettingTab, Setting, TFolder, TFile, TAbstractFile, requestUrl, Platform } from 'obsidian';
+import * as fs from 'fs';
+import * as path from 'path';
 
 interface GranolaPluginSettings {
 	outputFolder: string;
 	apiToken: string;
+	autoReadToken: boolean;
 	companyName: string;
 	usePipeAliases: boolean;
 	nameMapFilePath: string;
@@ -12,6 +15,7 @@ interface GranolaPluginSettings {
 const DEFAULT_SETTINGS: GranolaPluginSettings = {
 	outputFolder: 'Granola',
 	apiToken: '',
+	autoReadToken: true,
 	companyName: '',
 	usePipeAliases: true,
 	nameMapFilePath: '',
@@ -58,21 +62,94 @@ export default class GranolaPlugin extends Plugin {
 		await this.saveData(this.settings);
 	}
 
+	/**
+	 * Reads the Granola API token from the local supabase.json file.
+	 * The Granola app automatically refreshes this token, so it should always be current.
+	 * Only works on macOS desktop.
+	 */
+	getTokenFromLocalFile(): string | null {
+		// Only works on macOS desktop
+		if (!Platform.isMacOS) {
+			console.log('Auto-read token only supported on macOS');
+			return null;
+		}
+
+		try {
+			const homeDir = process.env.HOME || '';
+			const filePath = path.join(homeDir, 'Library', 'Application Support', 'Granola', 'supabase.json');
+
+			if (!fs.existsSync(filePath)) {
+				console.log('Granola supabase.json file not found at:', filePath);
+				return null;
+			}
+
+			const fileContent = fs.readFileSync(filePath, 'utf8');
+			const data = JSON.parse(fileContent);
+
+			// Try workos_tokens first (newer auth method)
+			if (data.workos_tokens) {
+				try {
+					const workosData = JSON.parse(data.workos_tokens);
+					if (workosData.access_token) {
+						console.log('Successfully read token from workos_tokens');
+						return workosData.access_token;
+					}
+				} catch (e) {
+					console.log('Failed to parse workos_tokens:', e);
+				}
+			}
+
+			// Fall back to cognito_tokens (older auth method)
+			if (data.cognito_tokens) {
+				try {
+					const cognitoData = JSON.parse(data.cognito_tokens);
+					if (cognitoData.access_token) {
+						console.log('Successfully read token from cognito_tokens');
+						return cognitoData.access_token;
+					}
+				} catch (e) {
+					console.log('Failed to parse cognito_tokens:', e);
+				}
+			}
+
+			console.log('No valid token found in supabase.json');
+			return null;
+		} catch (error) {
+			console.error('Error reading token from local file:', error);
+			return null;
+		}
+	}
+
 	async syncGranolaNotes() {
 		try {
 			// Show a notification that sync is starting
 			new Notice('Starting Granola notes sync...');
-			
-			// Check if token is available
-			if (!this.settings.apiToken) {
-				new Notice('No API token found. Please set your Granola API token in settings.');
+
+			// Get the token - try auto-read first if enabled, then fall back to manual setting
+			let token: string | null = null;
+
+			if (this.settings.autoReadToken) {
+				token = this.getTokenFromLocalFile();
+				if (token) {
+					console.log('Using auto-read token from Granola app');
+				}
+			}
+
+			// Fall back to manually configured token
+			if (!token && this.settings.apiToken) {
+				token = this.settings.apiToken;
+				console.log('Using manually configured token');
+			}
+
+			if (!token) {
+				new Notice('No API token found. Enable auto-read or set your Granola API token in settings.');
 				return;
 			}
-			
+
 			// Fetch the documents
 			let documents;
 			try {
-				documents = await this.fetchGranolaDocuments(this.settings.apiToken);
+				documents = await this.fetchGranolaDocuments(token);
 			} catch (error) {
 				// If this is an authentication error, show a notice but don't show the generic error
 				if (error.message && error.message.includes('Authentication failed')) {
@@ -672,8 +749,18 @@ class GranolaSettingTab extends PluginSettingTab {
 				}));
 
 		new Setting(containerEl)
-			.setName('API Token')
-			.setDesc('Your Granola API token (see below for how to find this)')
+			.setName('Auto-read token from Granola app')
+			.setDesc('Automatically read the API token from the Granola desktop app (macOS only). This eliminates the need to manually copy/paste tokens when they expire.')
+			.addToggle(toggle => toggle
+				.setValue(this.plugin.settings.autoReadToken)
+				.onChange(async (value) => {
+					this.plugin.settings.autoReadToken = value;
+					await this.plugin.saveSettings();
+				}));
+
+		new Setting(containerEl)
+			.setName('API Token (fallback)')
+			.setDesc('Manual API token. Used when auto-read is disabled or fails.')
 			.addText(text => text
 				.setPlaceholder('Enter your Granola API token')
 				.setValue(this.plugin.settings.apiToken)
@@ -736,28 +823,20 @@ class GranolaSettingTab extends PluginSettingTab {
 					await this.plugin.saveSettings();
 				}));
 
-		containerEl.createEl('h3', { text: 'How to find your API token' });
+		containerEl.createEl('h3', { text: 'About API tokens' });
 		const instructions = containerEl.createEl('div');
                 instructions.innerHTML = `
-                        <p>To find your Granola API token:</p>
+                        <p><strong>Auto-read (recommended):</strong> With "Auto-read token from Granola app" enabled (the default), the plugin automatically reads your token from the Granola desktop app. You don't need to configure anything manually.</p>
+                        <p><strong>Manual fallback:</strong> If auto-read doesn't work or you're not on macOS, you can manually set a token:</p>
                         <ol>
                                 <li>Run the following in your terminal to print your current token:</li>
                                 <pre><code>FILE="$HOME/Library/Application Support/Granola/supabase.json"
 jq -r ' (try (.workos_tokens | fromjson | .access_token) // empty) as $w
   | (try (.cognito_tokens | fromjson | .access_token) // empty) as $c
   | if ($w|length)>0 then $w else $c end' "$FILE"</code></pre>
-                                <li>Copy the printed token</li>
+                                <li>Copy the printed token into the "API Token (fallback)" field above</li>
                         </ol>
-                        <p>Or, if you have developer tools:</p>
-                        <ol>
-                                <li>Open Granola app</li>
-                                <li>Open developer tools (View → Developer → Toggle Developer Tools)</li>
-                                <li>Go to Network tab</li>
-                                <li>Look for requests to <code>api.granola.ai</code></li>
-                                <li>Find the Authorization header with format <code>Bearer &lt;token&gt;</code></li>
-                                <li>Copy the token part</li>
-                        </ol>
-                        <p><strong>Important:</strong> Granola API tokens expire regularly. If you see a 401 authentication error, run the command above again to obtain a fresh token.</p>
+                        <p><strong>Note:</strong> Granola API tokens expire regularly. With auto-read enabled, the plugin always uses the freshest token from the Granola app. If using manual tokens, you'll need to update them when they expire.</p>
                 `;
 	}
 }
