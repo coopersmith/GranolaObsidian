@@ -8,6 +8,7 @@ This plugin syncs your [Granola](https://granola.ai) notes to your Obsidian vaul
 - Preserves metadata in frontmatter (creation date, update date, note ID)
 - Converts Granola's formatting to Markdown
 - Simple one-click sync button
+- Automatic token refresh from Granola desktop app (macOS)
 
 ## Installation
 
@@ -27,36 +28,32 @@ This plugin syncs your [Granola](https://granola.ai) notes to your Obsidian vaul
 
 ## Setup
 
-1. Find your Granola API token using one of these methods:
+### macOS (Automatic)
 
-   > **Note:** Granola recently switched from Cognito to WorkOS for authentication. The old `cat ~/Library/Application Support/Granola/supabase.json` command shows a stale `cognito_tokens` entry. Use the following `jq` command to extract whichever token is currently valid.
+On macOS, the plugin automatically reads your API token from the Granola desktop app. No manual configuration needed:
 
-   
-   **Method 1: Using Terminal (new command)**
+1. Make sure you're logged into the Granola desktop app
+2. In Obsidian, go to Settings → Granola Notes Sync
+3. Configure your desired output folder
+4. (Optional) Configure a name mapping file to accurately display people's names
+
+The plugin reads the token from `~/Library/Application Support/Granola/supabase.json`, which Granola keeps updated automatically. You'll never need to manually copy/paste tokens.
+
+### Other Platforms (Manual)
+
+If you're not on macOS, or if auto-read doesn't work, you can manually configure a token:
+
+1. Disable "Auto-read token from Granola app" in plugin settings
+2. Find your Granola API token using the terminal command:
    ```bash
    FILE="$HOME/Library/Application Support/Granola/supabase.json"
    jq -r ' (try (.workos_tokens | fromjson | .access_token) // empty) as $w
      | (try (.cognito_tokens | fromjson | .access_token) // empty) as $c
      | if ($w|length)>0 then $w else $c end' "$FILE"
    ```
-   This command prints your current Granola access token. It prefers the new `workos_tokens` entry and falls back to the older `cognito_tokens` value if needed.
-   
-   **Method 2: Using Developer Tools**
-   - Open Granola app
-   - Open developer tools (View → Developer → Toggle Developer Tools)
-   - Go to Network tab
-   - Look for requests to `api.granola.ai`
-   - Find the Authorization header with format `Bearer <token>`
-   - Copy the token part
+3. Paste the token in the "API Token (fallback)" field in plugin settings
 
-   **Note about API token expiration:**
-   Granola API tokens expire regularly (often within a day). If you see a 401 authentication error when syncing,
-   run the command above again to obtain a fresh token and update it in your plugin settings.
-
-2. In Obsidian, go to Settings → Granola Notes Sync
-3. Paste your API token in the "API Token" field
-4. Configure your desired output folder
-5. (Optional) Configure a name mapping file to accurately display people's names
+> **Note:** Manual tokens expire regularly (often within a day). If you see a 401 authentication error, you'll need to run the command again and update the token.
 
 ## Email-to-Name Mapping
 
@@ -82,11 +79,17 @@ The plugin will then use these names when linking to people, displaying `[[Coope
 ## Troubleshooting
 
 ### Authentication errors (401)
-If you see errors like "Error fetching documents: Error: Request failed, status 401" or "Authentication failed" notifications:
-1. Your Granola API token has likely expired
-2. Generate a new token using the methods described in the Setup section
-3. Update the token in Obsidian Settings → Granola Notes Sync
-4. Try syncing again
+If you see "Authentication failed" notifications:
+
+**With auto-read enabled (macOS):**
+1. Make sure the Granola desktop app is installed and you're logged in
+2. Try opening Granola and using it briefly to refresh the token
+3. Check that the file exists: `~/Library/Application Support/Granola/supabase.json`
+
+**With manual token:**
+1. Your token has likely expired
+2. Run the terminal command in the Setup section to get a fresh token
+3. Update the token in plugin settings and try again
 
 ## Requirements
 
